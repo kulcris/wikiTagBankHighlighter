@@ -34,7 +34,7 @@ Use **Clear highlight** to remove all active highlights.
 
 Entering the category **Herbs** highlights all herb-related items in the bank with a colored outline:
 
-![Highlighted herbs in bank](<img width="1102" height="536" alt="image" src="https://github.com/user-attachments/assets/1f49909f-e647-4cee-92cd-f68e108dc652" />)
+<img width="1102" height="536" alt="image" src="https://github.com/user-attachments/assets/1f49909f-e647-4cee-92cd-f68e108dc652" />
 
 ---
 
@@ -42,7 +42,7 @@ Entering the category **Herbs** highlights all herb-related items in the bank wi
 
 Using **Create Bank Tag Tab** with the category **Mining** automatically creates a new Bank Tag tab and fills it with all matching items:
 
-![Generated mining bank tag tab](<img width="1108" height="535" alt="image" src="https://github.com/user-attachments/assets/23b0824b-6373-4f92-a5e6-f700990644f0" />)
+<img width="1108" height="535" alt="image" src="https://github.com/user-attachments/assets/23b0824b-6373-4f92-a5e6-f700990644f0" />
 
 ---
 
