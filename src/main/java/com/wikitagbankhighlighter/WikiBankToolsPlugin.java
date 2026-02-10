@@ -1,29 +1,29 @@
 package com.wikitagbankhighlighter;
 
 import com.google.common.base.MoreObjects;
-import com.google.gson.Gson;
 import com.google.inject.Provides;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import javax.imageio.ImageIO;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
-import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.events.PluginChanged;
+import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDependency;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.banktags.BankTagsPlugin;
 import net.runelite.client.plugins.banktags.TagManager;
+import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
-import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.Text;
 import okhttp3.OkHttpClient;
 
@@ -34,34 +34,33 @@ import static net.runelite.client.plugins.banktags.BankTagsPlugin.TAG_TABS_CONFI
 @Slf4j
 @PluginDescriptor(
         name = "Wiki Tag Bank Highlighter",
-        description = "Highlight bank items or create Bank Tag Tabs from OSRS Wiki categories."
+        description = "Highlight bank items or create Bank Tag tabs from OSRS Wiki categories."
 )
 @PluginDependency(BankTagsPlugin.class)
 public class WikiBankToolsPlugin extends Plugin
 {
+    private static final String ICON_PATH = "/wiki_bank_tools_icon.png";
+
     @Inject private Client client;
+    @Inject private ClientThread clientThread;
+
     @Inject private WikiBankToolsConfig config;
     @Inject private ConfigManager configManager;
-    @Inject private TagManager tagManager;
-    @Inject private ClientThread clientThread;
+
     @Inject private OkHttpClient httpClient;
-    @Inject private Gson gson;
+
+    @Inject private TagManager tagManager;
+    @Inject private ItemManager itemManager;
 
     @Inject private OverlayManager overlayManager;
     @Inject private WikiBankToolsOverlay overlay;
 
-    @Inject private net.runelite.client.ui.ClientToolbar clientToolbar;
+    @Inject private ClientToolbar clientToolbar;
 
     private NavigationButton navButton;
     private WikiBankToolsPanel panel;
 
-    private final ExecutorService exec = Executors.newSingleThreadExecutor(r ->
-    {
-        Thread t = new Thread(r, "wiki-bank-tools");
-        t.setDaemon(true);
-        return t;
-    });
-
+    // Highlight state
     private volatile int[] highlightIdsSortedDistinct = new int[0];
     private volatile boolean highlightEnabled = false;
 
@@ -78,9 +77,16 @@ public class WikiBankToolsPlugin extends Plugin
 
         panel = new WikiBankToolsPanel(this);
 
+        BufferedImage icon = loadIcon(ICON_PATH);
+        if (icon == null)
+        {
+            // Fallback: 1x1 transparent so older builders that require an icon won't crash
+            icon = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        }
+
         navButton = NavigationButton.builder()
                 .tooltip("Wiki Bank Tools")
-                .icon(ImageUtil.loadImageResource(getClass(), "/wiki_bank_tools_icon.png"))
+                .icon(icon)
                 .priority(6)
                 .panel(panel)
                 .build();
@@ -91,22 +97,23 @@ public class WikiBankToolsPlugin extends Plugin
     @Override
     protected void shutDown()
     {
+        highlightEnabled = false;
+        highlightIdsSortedDistinct = new int[0];
+
         if (navButton != null)
         {
             clientToolbar.removeNavigation(navButton);
             navButton = null;
         }
+
         panel = null;
 
         overlayManager.remove(overlay);
-
-        highlightEnabled = false;
-        highlightIdsSortedDistinct = new int[0];
-
-        exec.shutdownNow();
     }
 
-    // Called by the side panel
+    /**
+     * Side panel action: fetch IDs for category and enable highlighting.
+     */
     public void highlightCategory(String categoryInput)
     {
         final String category = normalizeCategoryInput(categoryInput);
@@ -116,12 +123,12 @@ public class WikiBankToolsPlugin extends Plugin
             return;
         }
 
-        postChat("Fetching IDs for category '" + category + "'...");
         setPanelBusy(true, "Fetching…");
+        postChat("Fetching IDs for category '" + category + "'...");
 
         WikiBucketClient.fetchCategoryItemIdsAsync(httpClient, category, (ids, err) ->
         {
-            final int[] sortedDistinct = java.util.Arrays.stream(ids).distinct().sorted().toArray();
+            final int[] sortedDistinct = Arrays.stream(ids).distinct().sorted().toArray();
 
             clientThread.invokeLater(() ->
             {
@@ -147,7 +154,9 @@ public class WikiBankToolsPlugin extends Plugin
         });
     }
 
-    // Called by the side panel
+    /**
+     * Side panel action: fetch IDs for category and create a Bank Tag tab + apply tags.
+     */
     public void createBankTagTab(String categoryInput)
     {
         final String category = normalizeCategoryInput(categoryInput);
@@ -157,12 +166,12 @@ public class WikiBankToolsPlugin extends Plugin
             return;
         }
 
-        postChat("Generating Bank Tag Tab for '" + category + "'...");
         setPanelBusy(true, "Fetching…");
+        postChat("Generating Bank Tag Tab for '" + category + "'...");
 
         WikiBucketClient.fetchCategoryItemIdsAsync(httpClient, category, (ids, err) ->
         {
-            final int[] distinct = java.util.Arrays.stream(ids).distinct().toArray();
+            final int[] distinct = Arrays.stream(ids).distinct().toArray();
 
             clientThread.invokeLater(() ->
             {
@@ -190,8 +199,9 @@ public class WikiBankToolsPlugin extends Plugin
         });
     }
 
-
-    // Called by the side panel
+    /**
+     * Side panel action: clear highlights.
+     */
     public void clearHighlight()
     {
         highlightEnabled = false;
@@ -204,13 +214,18 @@ public class WikiBankToolsPlugin extends Plugin
         return highlightEnabled;
     }
 
+    /**
+     * Used by overlay. Canonicalizes bank item IDs (noted/unnoted) before matching.
+     */
     public boolean shouldHighlight(int itemId)
     {
         if (!highlightEnabled || itemId <= 0)
         {
             return false;
         }
-        return Arrays.binarySearch(highlightIdsSortedDistinct, itemId) >= 0;
+
+        int canonical = itemManager.canonicalize(itemId);
+        return Arrays.binarySearch(highlightIdsSortedDistinct, canonical) >= 0;
     }
 
     private void createTabIfMissing(String tag, int iconItemId)
@@ -231,9 +246,15 @@ public class WikiBankToolsPlugin extends Plugin
 
     private List<String> getAllTabs()
     {
-        return Text.fromCSV(MoreObjects.firstNonNull(configManager.getConfiguration(CONFIG_GROUP, TAG_TABS_CONFIG), ""));
+        return Text.fromCSV(MoreObjects.firstNonNull(
+                configManager.getConfiguration(CONFIG_GROUP, TAG_TABS_CONFIG),
+                ""
+        ));
     }
 
+    /**
+     * Must be called on client thread, so always marshal via clientThread.
+     */
     private void postChat(String msg)
     {
         final String full = "Wiki Bank Tools: " + msg;
@@ -242,6 +263,9 @@ public class WikiBankToolsPlugin extends Plugin
         );
     }
 
+    /**
+     * UI updates must be on Swing EDT.
+     */
     private void setPanelBusy(boolean busy, String status)
     {
         if (panel == null)
@@ -264,5 +288,25 @@ public class WikiBankToolsPlugin extends Plugin
             s = s.substring("Category:".length()).trim();
         }
         return s;
+    }
+
+    /**
+     * PluginHub-safe resource loading:
+     * Use getResourceAsStream (jar-safe) rather than getResource (URL changes between IDE/jar).
+     */
+    private static BufferedImage loadIcon(String path)
+    {
+        try (InputStream in = WikiBankToolsPlugin.class.getResourceAsStream(path))
+        {
+            if (in == null)
+            {
+                return null;
+            }
+            return ImageIO.read(in);
+        }
+        catch (IOException e)
+        {
+            return null;
+        }
     }
 }

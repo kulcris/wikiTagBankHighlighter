@@ -14,7 +14,7 @@ repositories {
 }
 
 def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.wikitagbankhighlighter.WikiBankToolsPluginTest'
+def pluginMainClass = 'com.wikitagbankhighlighter.WikiBankToolsPlugin'
 
 dependencies {
 	compileOnly group: 'net.runelite', name:'client', version: runeLiteVersion
