@@ -84,7 +84,4 @@ You can customize:
 
 ---
 
-### Image setup reminder (for GitHub)
-
-Place your screenshots in the repository like this:
 
