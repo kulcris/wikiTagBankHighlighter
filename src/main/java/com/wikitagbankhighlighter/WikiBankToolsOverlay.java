@@ -7,7 +7,7 @@ import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.Point;
 import net.runelite.api.widgets.Widget;
-import net.runelite.api.widgets.WidgetInfo;
+import net.runelite.api.widgets.ComponentID;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
@@ -38,10 +38,11 @@ public class WikiBankToolsOverlay extends Overlay
             return null;
         }
 
-        Widget itemContainer = client.getWidget(WidgetInfo.BANK_ITEM_CONTAINER);
+        // Plugin Hub: avoid WidgetInfo/WidgetID, use ComponentID/InterfaceID
+        Widget itemContainer = client.getWidget(ComponentID.BANK_ITEM_CONTAINER);
         if (itemContainer == null || itemContainer.isHidden())
         {
-            return null;
+            return null; // bank not open
         }
 
         Widget[] items = itemContainer.getChildren();
@@ -50,7 +51,7 @@ public class WikiBankToolsOverlay extends Overlay
             return null;
         }
 
-        // Container viewport on-canvas
+        // Container viewport (on-canvas)
         Point cLoc = itemContainer.getCanvasLocation();
         if (cLoc == null)
         {
@@ -68,7 +69,7 @@ public class WikiBankToolsOverlay extends Overlay
 
         Rectangle viewport = new Rectangle(cX, cY, cW, cH);
 
-        // Scroll offsets (these change when you scroll the bank)
+        // Scroll offsets (change when you scroll the bank)
         int scrollX = itemContainer.getScrollX();
         int scrollY = itemContainer.getScrollY();
 
@@ -96,7 +97,7 @@ public class WikiBankToolsOverlay extends Overlay
                 continue;
             }
 
-            // Skip anything not visible in the scrolled viewport
+            // Don't draw outlines for rows that are currently scrolled out of view
             if (!viewport.intersects(r))
             {
                 continue;

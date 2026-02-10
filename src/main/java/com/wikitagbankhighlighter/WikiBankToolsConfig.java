@@ -27,16 +27,4 @@ public interface WikiBankToolsConfig extends Config
     {
         return 2;
     }
-    @ConfigItem(
-            keyName = "debugDrawGridBox",
-            name = "Debug: draw grid box",
-            description = "Draws a box around the detected bank item grid.",
-            position = 10
-    )
-    default boolean debugDrawGridBox()
-    {
-        return false;
-    }
-
-
 }
