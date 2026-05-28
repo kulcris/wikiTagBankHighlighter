@@ -7,8 +7,14 @@ import com.google.gson.JsonParser;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -34,7 +40,7 @@ public class WikiBucketClient
             BiConsumer<int[], Throwable> callback
     )
     {
-        final String safe = normalizeForBucket(category);
+        final String safe = escapeBucketString(normalizeForBucket(category));
         final String query = String.format("bucket('item_id').select('item_id.id').where('Category:%s')", safe);
         final String url = String.format(WIKI_BUCKET_QUERY_FORMAT, urlEncode(query));
 
@@ -90,6 +96,55 @@ public class WikiBucketClient
                 }
             }
         });
+    }
+
+    public static void fetchCategoryItemIdsAsync(
+            OkHttpClient http,
+            List<String> categories,
+            BiConsumer<int[], Throwable> callback
+    )
+    {
+        List<String> normalized = normalizeCategories(categories);
+        if (normalized.isEmpty())
+        {
+            callback.accept(new int[0], null);
+            return;
+        }
+
+        if (normalized.size() == 1)
+        {
+            fetchCategoryItemIdsAsync(http, normalized.get(0), callback);
+            return;
+        }
+
+        Set<Integer> merged = Collections.synchronizedSet(new HashSet<>(1024));
+        AtomicInteger remaining = new AtomicInteger(normalized.size());
+        AtomicReference<Throwable> firstError = new AtomicReference<>();
+
+        for (String category : normalized)
+        {
+            fetchCategoryItemIdsAsync(http, category, (ids, err) ->
+            {
+                if (err != null)
+                {
+                    firstError.compareAndSet(null, err);
+                }
+
+                for (int id : ids)
+                {
+                    if (id > 0)
+                    {
+                        merged.add(id);
+                    }
+                }
+
+                if (remaining.decrementAndGet() == 0)
+                {
+                    int[] out = merged.stream().mapToInt(i -> i).toArray();
+                    callback.accept(out, firstError.get());
+                }
+            });
+        }
     }
 
     private static void collectInts(JsonElement el, Set<Integer> out)
@@ -151,6 +206,30 @@ public class WikiBucketClient
     private static String normalizeForBucket(String subject)
     {
         return (subject == null ? "" : subject.replace("_", " ").trim());
+    }
+
+    private static List<String> normalizeCategories(List<String> categories)
+    {
+        if (categories == null || categories.isEmpty())
+        {
+            return new ArrayList<>();
+        }
+
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (String category : categories)
+        {
+            String normalized = normalizeForBucket(category);
+            if (!normalized.isEmpty())
+            {
+                out.add(normalized);
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
+    private static String escapeBucketString(String s)
+    {
+        return s.replace("\\", "\\\\").replace("'", "\\'");
     }
 
     private static String urlEncode(String s)

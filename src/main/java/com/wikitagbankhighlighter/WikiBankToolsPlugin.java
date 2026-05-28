@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import javax.imageio.ImageIO;
 import javax.inject.Inject;
@@ -60,7 +61,6 @@ public class WikiBankToolsPlugin extends Plugin
     private NavigationButton navButton;
     private WikiBankToolsPanel panel;
 
-    // Highlight state
     private volatile int[] highlightIdsSortedDistinct = new int[0];
     private volatile boolean highlightEnabled = false;
 
@@ -80,7 +80,6 @@ public class WikiBankToolsPlugin extends Plugin
         BufferedImage icon = loadIcon(ICON_PATH);
         if (icon == null)
         {
-            // Fallback: 1x1 transparent so older builders that require an icon won't crash
             icon = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         }
 
@@ -111,22 +110,20 @@ public class WikiBankToolsPlugin extends Plugin
         overlayManager.remove(overlay);
     }
 
-    /**
-     * Side panel action: fetch IDs for category and enable highlighting.
-     */
     public void highlightCategory(String categoryInput)
     {
-        final String category = normalizeCategoryInput(categoryInput);
-        if (category.isEmpty())
+        final List<String> categories = parseCategoryInput(categoryInput);
+        if (categories.isEmpty())
         {
             postChat("Category is empty.");
             return;
         }
 
-        setPanelBusy(true, "Fetching…");
-        postChat("Fetching IDs for category '" + category + "'...");
+        final String label = String.join(", ", categories);
+        setPanelBusy(true, "Fetching...");
+        postChat("Fetching IDs for categories '" + label + "'...");
 
-        WikiBucketClient.fetchCategoryItemIdsAsync(httpClient, category, (ids, err) ->
+        WikiBucketClient.fetchCategoryItemIdsAsync(httpClient, categories, (ids, err) ->
         {
             final int[] sortedDistinct = Arrays.stream(ids).distinct().sorted().toArray();
 
@@ -134,7 +131,10 @@ public class WikiBankToolsPlugin extends Plugin
             {
                 if (err != null)
                 {
-                    postChat("Fetch failed for '" + category + "': " + err.getMessage());
+                    postChat("Fetch failed for '" + label + "': " + err.getMessage());
+                    highlightEnabled = false;
+                    highlightIdsSortedDistinct = new int[0];
+                    return;
                 }
 
                 highlightIdsSortedDistinct = sortedDistinct;
@@ -142,11 +142,11 @@ public class WikiBankToolsPlugin extends Plugin
 
                 if (sortedDistinct.length == 0)
                 {
-                    postChat("No items found for '" + category + "'.");
+                    postChat("No items found for '" + label + "'.");
                 }
                 else
                 {
-                    postChat("Highlighting " + sortedDistinct.length + " items for '" + category + "'.");
+                    postChat("Highlighting " + sortedDistinct.length + " items for '" + label + "'.");
                 }
             });
 
@@ -154,22 +154,21 @@ public class WikiBankToolsPlugin extends Plugin
         });
     }
 
-    /**
-     * Side panel action: fetch IDs for category and create a Bank Tag tab + apply tags.
-     */
     public void createBankTagTab(String categoryInput)
     {
-        final String category = normalizeCategoryInput(categoryInput);
-        if (category.isEmpty())
+        final List<String> categories = parseCategoryInput(categoryInput);
+        if (categories.isEmpty())
         {
             postChat("Category is empty.");
             return;
         }
 
-        setPanelBusy(true, "Fetching…");
-        postChat("Generating Bank Tag Tab for '" + category + "'...");
+        final String label = String.join(", ", categories);
+        final String tagName = buildCombinedTagName(categories);
+        setPanelBusy(true, "Fetching...");
+        postChat("Generating Bank Tag Tab for '" + label + "'...");
 
-        WikiBucketClient.fetchCategoryItemIdsAsync(httpClient, category, (ids, err) ->
+        WikiBucketClient.fetchCategoryItemIdsAsync(httpClient, categories, (ids, err) ->
         {
             final int[] distinct = Arrays.stream(ids).distinct().toArray();
 
@@ -177,31 +176,29 @@ public class WikiBankToolsPlugin extends Plugin
             {
                 if (err != null)
                 {
-                    postChat("Fetch failed for '" + category + "': " + err.getMessage());
+                    postChat("Fetch failed for '" + label + "': " + err.getMessage());
+                    return;
                 }
 
                 if (distinct.length == 0)
                 {
-                    postChat("No items found for '" + category + "'.");
+                    postChat("No items found for '" + label + "'.");
                     return;
                 }
 
                 for (int itemId : distinct)
                 {
-                    tagManager.addTag(itemId, category, false);
+                    tagManager.addTag(itemId, tagName, false);
                 }
 
-                createTabIfMissing(category, distinct[0]);
-                postChat("Added tag/tab '" + category + "' to " + distinct.length + " items.");
+                createTabIfMissing(tagName, distinct[0]);
+                postChat("Added tag/tab '" + tagName + "' to " + distinct.length + " items.");
             });
 
             setPanelBusy(false, "");
         });
     }
 
-    /**
-     * Side panel action: clear highlights.
-     */
     public void clearHighlight()
     {
         highlightEnabled = false;
@@ -214,9 +211,6 @@ public class WikiBankToolsPlugin extends Plugin
         return highlightEnabled;
     }
 
-    /**
-     * Used by overlay. Canonicalizes bank item IDs (noted/unnoted) before matching.
-     */
     public boolean shouldHighlight(int itemId)
     {
         if (!highlightEnabled || itemId <= 0)
@@ -252,9 +246,6 @@ public class WikiBankToolsPlugin extends Plugin
         ));
     }
 
-    /**
-     * Must be called on client thread, so always marshal via clientThread.
-     */
     private void postChat(String msg)
     {
         final String full = "Wiki Bank Tools: " + msg;
@@ -263,9 +254,6 @@ public class WikiBankToolsPlugin extends Plugin
         );
     }
 
-    /**
-     * UI updates must be on Swing EDT.
-     */
     private void setPanelBusy(boolean busy, String status)
     {
         if (panel == null)
@@ -290,10 +278,31 @@ public class WikiBankToolsPlugin extends Plugin
         return s;
     }
 
-    /**
-     * PluginHub-safe resource loading:
-     * Use getResourceAsStream (jar-safe) rather than getResource (URL changes between IDE/jar).
-     */
+    private static List<String> parseCategoryInput(String input)
+    {
+        LinkedHashSet<String> categories = new LinkedHashSet<>();
+        if (input == null)
+        {
+            return new ArrayList<>();
+        }
+
+        for (String part : input.split(","))
+        {
+            String normalized = normalizeCategoryInput(part);
+            if (!normalized.isEmpty())
+            {
+                categories.add(normalized);
+            }
+        }
+
+        return new ArrayList<>(categories);
+    }
+
+    private static String buildCombinedTagName(List<String> categories)
+    {
+        return String.join(", ", categories);
+    }
+
     private static BufferedImage loadIcon(String path)
     {
         try (InputStream in = WikiBankToolsPlugin.class.getResourceAsStream(path))

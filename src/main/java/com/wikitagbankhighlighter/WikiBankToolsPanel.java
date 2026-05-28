@@ -4,7 +4,7 @@ import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.event.ActionEvent;
 import javax.swing.*;
-        import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.ui.PluginPanel;
 
 public class WikiBankToolsPanel extends PluginPanel
 {
@@ -25,7 +25,7 @@ public class WikiBankToolsPanel extends PluginPanel
         JPanel top = new JPanel();
         top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 
-        JLabel catLabel = new JLabel("Wiki category (e.g. Herbs):");
+        JLabel catLabel = new JLabel("Wiki categories (e.g. Herbs, Potions):");
         catLabel.setAlignmentX(LEFT_ALIGNMENT);
 
         categoryField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
