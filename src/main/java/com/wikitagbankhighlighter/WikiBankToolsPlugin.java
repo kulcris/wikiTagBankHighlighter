@@ -34,7 +34,7 @@ import static net.runelite.client.plugins.banktags.BankTagsPlugin.TAG_TABS_CONFI
 
 @Slf4j
 @PluginDescriptor(
-        name = "Wiki Tag Bank Highlighter",
+        name = "Wiki Bank Tools",
         description = "Highlight bank items or create Bank Tag tabs from OSRS Wiki categories."
 )
 @PluginDependency(BankTagsPlugin.class)

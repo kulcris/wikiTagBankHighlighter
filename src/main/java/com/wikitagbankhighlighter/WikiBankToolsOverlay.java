@@ -69,10 +69,6 @@ public class WikiBankToolsOverlay extends Overlay
 
         Rectangle viewport = new Rectangle(cX, cY, cW, cH);
 
-        // Scroll offsets (change when you scroll the bank)
-        int scrollX = itemContainer.getScrollX();
-        int scrollY = itemContainer.getScrollY();
-
         for (Widget w : items)
         {
             if (w == null || w.isHidden())
@@ -91,7 +87,7 @@ public class WikiBankToolsOverlay extends Overlay
                 continue;
             }
 
-            Rectangle r = toScrolledCanvasBounds(itemContainer, w, cX, cY, scrollX, scrollY);
+            Rectangle r = toWidgetBounds(w);
             if (r == null)
             {
                 continue;
@@ -109,19 +105,14 @@ public class WikiBankToolsOverlay extends Overlay
         return null;
     }
 
-    private Rectangle toScrolledCanvasBounds(Widget container, Widget child, int cX, int cY, int scrollX, int scrollY)
+    private Rectangle toWidgetBounds(Widget child)
     {
-        int w = child.getWidth();
-        int h = child.getHeight();
-        if (w <= 0 || h <= 0)
+        Rectangle bounds = child.getBounds();
+        if (bounds == null || bounds.width <= 0 || bounds.height <= 0)
         {
             return null;
         }
 
-        // Child position relative to the container's content, adjusted by scroll
-        int x = cX + child.getRelativeX() - scrollX;
-        int y = cY + child.getRelativeY() - scrollY;
-
-        return new Rectangle(x, y, w, h);
+        return bounds;
     }
 }

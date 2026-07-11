@@ -24,8 +24,12 @@ import okhttp3.Response;
 
 public class WikiBucketClient
 {
+    private static final int PAGE_SIZE = 2000;
+    private static final String CATEGORY_PREFIX = "Category:";
     private static final String WIKI_BUCKET_QUERY_FORMAT =
-            "https://oldschool.runescape.wiki/api.php?action=bucket&query=%s.limit(2000).run()&format=json";
+            "https://oldschool.runescape.wiki/api.php?action=bucket&query=%s&format=json";
+    private static final String WIKI_SEARCH_URL_FORMAT =
+            "https://oldschool.runescape.wiki/api.php?action=query&list=search&srnamespace=14&srlimit=1&format=json&formatversion=2&srsearch=%s";
 
     /**
      * Async: fetch item ids for a wiki category using OSRS Wiki bucket endpoint.
@@ -40,61 +44,18 @@ public class WikiBucketClient
             BiConsumer<int[], Throwable> callback
     )
     {
-        final String safe = escapeBucketString(normalizeForBucket(category));
-        final String query = String.format("bucket('item_id').select('item_id.id').where('Category:%s')", safe);
-        final String url = String.format(WIKI_BUCKET_QUERY_FORMAT, urlEncode(query));
-
-        Request req = new Request.Builder().url(url).build();
-
-        http.newCall(req).enqueue(new Callback()
+        final String normalized = normalizeForBucket(category);
+        resolveCategoryNameAsync(http, normalized, (resolvedCategory, err) ->
         {
-            @Override
-            public void onFailure(Call call, IOException e)
+            if (err != null)
             {
-                callback.accept(new int[0], e);
+                callback.accept(new int[0], err);
+                return;
             }
 
-            @Override
-            public void onResponse(Call call, Response resp) throws IOException
-            {
-                if (!resp.isSuccessful() || resp.body() == null)
-                {
-                    callback.accept(new int[0], new IOException("HTTP " + resp.code()));
-                    return;
-                }
-
-                String json = resp.body().string();
-
-                try
-                {
-                    // Older Gson compatibility
-                    JsonParser parser = new JsonParser();
-                    JsonObject root = parser.parse(json).getAsJsonObject();
-
-                    JsonArray bucket = root.has("bucket") && root.get("bucket").isJsonArray()
-                            ? root.getAsJsonArray("bucket")
-                            : null;
-
-                    if (bucket == null)
-                    {
-                        callback.accept(new int[0], null);
-                        return;
-                    }
-
-                    Set<Integer> ids = new HashSet<>(1024);
-                    for (JsonElement el : bucket)
-                    {
-                        collectInts(el, ids);
-                    }
-
-                    int[] out = ids.stream().mapToInt(i -> i).toArray();
-                    callback.accept(out, null);
-                }
-                catch (Throwable t)
-                {
-                    callback.accept(new int[0], t);
-                }
-            }
+            final String safe = escapeBucketString(resolvedCategory);
+            final String baseQuery = String.format("bucket('item_id').select('item_id.id').where('%s%s')", CATEGORY_PREFIX, safe);
+            fetchCategoryPageAsync(http, baseQuery, 0, new HashSet<>(1024), callback);
         });
     }
 
@@ -147,48 +108,204 @@ public class WikiBucketClient
         }
     }
 
-    private static void collectInts(JsonElement el, Set<Integer> out)
+    private static void fetchCategoryPageAsync(
+            OkHttpClient http,
+            String baseQuery,
+            int offset,
+            Set<Integer> out,
+            BiConsumer<int[], Throwable> callback
+    )
     {
-        if (el == null || el.isJsonNull())
-        {
-            return;
-        }
+        String pagedQuery = String.format("%s.limit(%d).offset(%d).run()", baseQuery, PAGE_SIZE, offset);
+        String url = String.format(WIKI_BUCKET_QUERY_FORMAT, urlEncode(pagedQuery));
+        Request req = new Request.Builder().url(url).build();
 
-        if (el.isJsonPrimitive())
+        http.newCall(req).enqueue(new Callback()
         {
-            String s = el.getAsString().trim();
-            if (isDigits(s))
+            @Override
+            public void onFailure(Call call, IOException e)
             {
+                callback.accept(new int[0], e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response resp) throws IOException
+            {
+                if (!resp.isSuccessful() || resp.body() == null)
+                {
+                    callback.accept(new int[0], new IOException("HTTP " + resp.code()));
+                    return;
+                }
+
+                String json = resp.body().string();
+
                 try
                 {
-                    int v = Integer.parseInt(s);
-                    if (v > 0 && v < 50000)
+                    JsonParser parser = new JsonParser();
+                    JsonObject root = parser.parse(json).getAsJsonObject();
+                    JsonArray bucket = root.has("bucket") && root.get("bucket").isJsonArray()
+                            ? root.getAsJsonArray("bucket")
+                            : null;
+
+                    if (bucket == null || bucket.size() == 0)
                     {
-                        out.add(v);
+                        callback.accept(out.stream().mapToInt(i -> i).toArray(), null);
+                        return;
                     }
+
+                    for (JsonElement el : bucket)
+                    {
+                        collectItemIds(el, out);
+                    }
+
+                    if (bucket.size() < PAGE_SIZE)
+                    {
+                        callback.accept(out.stream().mapToInt(i -> i).toArray(), null);
+                        return;
+                    }
+
+                    fetchCategoryPageAsync(http, baseQuery, offset + PAGE_SIZE, out, callback);
                 }
-                catch (NumberFormatException ignored)
+                catch (Throwable t)
                 {
+                    callback.accept(new int[0], t);
                 }
             }
+        });
+    }
+
+    private static void resolveCategoryNameAsync(
+            OkHttpClient http,
+            String category,
+            BiConsumer<String, Throwable> callback
+    )
+    {
+        if (category == null || category.isEmpty())
+        {
+            callback.accept("", null);
             return;
         }
 
-        if (el.isJsonArray())
+        String query = String.format("\"%s\"", category);
+        String url = String.format(WIKI_SEARCH_URL_FORMAT, urlEncode(query));
+        Request req = new Request.Builder().url(url).build();
+
+        http.newCall(req).enqueue(new Callback()
         {
-            for (JsonElement a : el.getAsJsonArray())
+            @Override
+            public void onFailure(Call call, IOException e)
             {
-                collectInts(a, out);
+                callback.accept(category, null);
+            }
+
+            @Override
+            public void onResponse(Call call, Response resp) throws IOException
+            {
+                if (!resp.isSuccessful() || resp.body() == null)
+                {
+                    callback.accept(category, null);
+                    return;
+                }
+
+                try
+                {
+                    String json = resp.body().string();
+                    JsonParser parser = new JsonParser();
+                    JsonObject root = parser.parse(json).getAsJsonObject();
+                    JsonObject queryObject = root.has("query") && root.get("query").isJsonObject()
+                            ? root.getAsJsonObject("query")
+                            : null;
+                    JsonArray search = queryObject != null && queryObject.has("search") && queryObject.get("search").isJsonArray()
+                            ? queryObject.getAsJsonArray("search")
+                            : null;
+
+                    if (search == null || search.size() == 0)
+                    {
+                        callback.accept(category, null);
+                        return;
+                    }
+
+                    JsonElement first = search.get(0);
+                    if (!first.isJsonObject())
+                    {
+                        callback.accept(category, null);
+                        return;
+                    }
+
+                    JsonObject result = first.getAsJsonObject();
+                    JsonElement titleElement = result.get("title");
+                    if (titleElement == null || !titleElement.isJsonPrimitive())
+                    {
+                        callback.accept(category, null);
+                        return;
+                    }
+
+                    String title = titleElement.getAsString();
+                    if (title.regionMatches(true, 0, CATEGORY_PREFIX, 0, CATEGORY_PREFIX.length()))
+                    {
+                        callback.accept(title.substring(CATEGORY_PREFIX.length()), null);
+                        return;
+                    }
+
+                    callback.accept(category, null);
+                }
+                catch (Throwable t)
+                {
+                    callback.accept(category, null);
+                }
+            }
+        });
+    }
+
+    private static void collectItemIds(JsonElement el, Set<Integer> out)
+    {
+        if (el == null || !el.isJsonObject())
+        {
+            return;
+        }
+
+        JsonObject obj = el.getAsJsonObject();
+        JsonElement idsElement = obj.get("item_id.id");
+        if (idsElement == null || idsElement.isJsonNull())
+        {
+            return;
+        }
+
+        if (idsElement.isJsonArray())
+        {
+            for (JsonElement idElement : idsElement.getAsJsonArray())
+            {
+                addItemId(idElement, out);
             }
             return;
         }
 
-        if (el.isJsonObject())
+        addItemId(idsElement, out);
+    }
+
+    private static void addItemId(JsonElement el, Set<Integer> out)
+    {
+        if (el == null || !el.isJsonPrimitive())
         {
-            for (String k : el.getAsJsonObject().keySet())
+            return;
+        }
+
+        String s = el.getAsString().trim();
+        if (!isDigits(s))
+        {
+            return;
+        }
+
+        try
+        {
+            int v = Integer.parseInt(s);
+            if (v > 0)
             {
-                collectInts(el.getAsJsonObject().get(k), out);
+                out.add(v);
             }
+        }
+        catch (NumberFormatException ignored)
+        {
         }
     }
 
